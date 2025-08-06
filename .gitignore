@@ -1,13 +1,4 @@
-bin/
-*.log
-*.exe
-*.out
-*.test
-
 .idea/
-
-frontend/node_modules/
-frontend/dist/
 
 **/coverage/
 Thumbs.db
