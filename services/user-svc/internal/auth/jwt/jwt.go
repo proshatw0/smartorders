@@ -9,62 +9,76 @@ import (
 	"time"
 )
 
-// сроки жизни в минутах
+// REFEXP — срок жизни refresh-токена (14 суток).
+// ACCEXP — срок жизни access-токена (10 минут).
 const (
 	REFEXP = 14 * 24 * time.Hour
 	ACCEXP = 10 * time.Minute
-
-	KEY = "6h6h25f43h6996h245f7386h23459f78fh92456378f2345h9c678"
 )
 
-// струтура заголовка
+// Header — структура заголовка JWT.
+// Поле Alg фиксировано ("EdDSA"), Kid — идентификатор ключа.
 type Header struct {
 	Alg string `json:"alg"`
 	Kid string `json:"kid,omitempty"`
 }
 
-// струтура полезной нагрузки
+// Payload — структура полезной нагрузки JWT.
+// Содержит стандартные поля RFC 7519 и дополнительные (`Did`, `Tus`).
 type Payload struct {
-	Iss string   `json:"iss,omitempty"` // издатель токена
-	Sub string   `json:"sub,omitempty"` // субъект, которому выдан токен
-	Aud []string `json:"aud,omitempty"` // получатели, которым предназначается данный токен
-	Exp int64    `json:"exp,omitempty"` // время, когда токен станет невалидным
-	Nbf int64    `json:"nbf,omitempty"` // время, с которого токен считается действительным
-	Iat int64    `json:"iat,omitempty"` // время, в которое выдан токен
-	Jti string   `json:"jti,omitempty"` // уникальный идентификатор токена
-	Did string   `json:"did,omitempty"` // уникальный идентификатор устройства для которого предоставляется токен
-	Tus string   `json:"tus,omitempty"` // тип токена
+	Iss string   `json:"iss,omitempty"` // Issuer — издатель токена
+	Sub string   `json:"sub,omitempty"` // Subject — субъект (пользователь)
+	Aud []string `json:"aud,omitempty"` // Audience — получатели токена
+	Exp int64    `json:"exp,omitempty"` // Expiration — момент истечения
+	Nbf int64    `json:"nbf,omitempty"` // Not Before — начало действия
+	Iat int64    `json:"iat,omitempty"` // Issued At — время выдачи
+	Jti string   `json:"jti,omitempty"` // JWT ID — уникальный идентификатор
+	Did string   `json:"did,omitempty"` // Device ID — уникальное устройство
+	Tus string   `json:"tus,omitempty"` // Token Use — тип токена ("access"/"refresh")
 }
 
-// струтура токена
+// Token — полная структура JWT.
+// Объединяет заголовок, полезную нагрузку и подпись.
 type Token struct {
-	Header    Header  // заголовок
-	Payload   Payload // полезная нагрузка
-	Signature string  // подпись
+	Header    Header
+	Payload   Payload
+	Signature string
 }
 
+// EncodeOptions — параметры для генерации токена.
+// Используются через функциональные опции.
 type EncodeOptions struct {
-	TTL       time.Duration
-	NotBefore *time.Time
-	Issuer    string
-	Now       time.Time
+	TTL       time.Duration // срок жизни токена
+	NotBefore *time.Time    // момент начала действия
+	Issuer    string        // издатель
+	Now       time.Time     // текущее время (для тестов или переопределения)
 }
 
+// EncodeOption — функция, изменяющая EncodeOptions.
 type EncodeOption func(*EncodeOptions)
 
+// WithTTL — задаёт срок жизни токена.
 func WithTTL(ttl time.Duration) EncodeOption {
 	return func(o *EncodeOptions) { o.TTL = ttl }
 }
+
+// WithNotBefore — задаёт момент, с которого токен становится активным.
 func WithNotBefore(t time.Time) EncodeOption {
 	return func(o *EncodeOptions) { o.NotBefore = &t }
 }
+
+// WithIssuer — задаёт издателя токена.
 func WithIssuer(iss string) EncodeOption {
 	return func(o *EncodeOptions) { o.Issuer = iss }
 }
+
+// WithNow — задаёт текущее время (используется для тестов).
 func WithNow(t time.Time) EncodeOption {
 	return func(o *EncodeOptions) { o.Now = t }
 }
 
+// Encode — создаёт и подписывает JWT с использованием Ed25519.
+// Возвращает строковое представление токена в формате base64(header).base64(payload).base64(signature).
 func (t *Token) Encode(priv ed25519.PrivateKey, opts ...EncodeOption) (string, error) {
 	if t.Payload.Sub == "" {
 		return "", errors.New("sub is empty")
@@ -125,7 +139,6 @@ func (t *Token) Encode(priv ed25519.PrivateKey, opts ...EncodeOption) (string, e
 	if t.Payload.Exp == 0 {
 		t.Payload.Exp = now.Add(ttl).Unix()
 	}
-
 	hb, err := json.Marshal(t.Header)
 	if err != nil {
 		return "", err
@@ -144,6 +157,8 @@ func (t *Token) Encode(priv ed25519.PrivateKey, opts ...EncodeOption) (string, e
 	return signing + "." + sigB64, nil
 }
 
+// Verify — проверяет подпись и валидность JWT.
+// Проверяет структуру токена, алгоритм, подпись и временные ограничения.
 func Verify(token string, pub ed25519.PublicKey) (*Token, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
@@ -181,7 +196,7 @@ func Verify(token string, pub ed25519.PublicKey) (*Token, error) {
 	}
 
 	now := time.Now().Unix()
-	const leeway int64 = 60
+	const leeway int64 = 30 // допуск 30 секунд
 	if pay.Nbf != 0 && now+leeway < pay.Nbf {
 		return nil, errors.New("token not active yet")
 	}

@@ -14,12 +14,14 @@ import (
 	"reflect"
 	"runtime"
 	"smartorders/user-svc/internal/api"
+	"smartorders/user-svc/internal/store/postgresql"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 )
 
+// stringFlag — вспомогательный тип для флагов со строковым значением.
 type stringFlag struct {
 	set bool
 	val string
@@ -28,6 +30,8 @@ type stringFlag struct {
 func (s *stringFlag) String() string       { return s.val }
 func (s *stringFlag) Set(v string) error   { s.val, s.set = v, true; return nil }
 func newStringFlag(def string) *stringFlag { return &stringFlag{val: def} }
+
+// boolFlag — вспомогательный тип для булевых флагов.
 
 type boolFlag struct {
 	set bool
@@ -40,6 +44,7 @@ func (b *boolFlag) String() string {
 	}
 	return "false"
 }
+
 func (b *boolFlag) Set(v string) error {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "", "1", "t", "true", "yes", "y", "on":
@@ -53,6 +58,23 @@ func (b *boolFlag) Set(v string) error {
 }
 func newBoolFlag(def bool) *boolFlag { return &boolFlag{val: def} }
 
+// Run — точка входа для запуска HTTP-сервера user-svc.
+//
+// Обрабатывает флаги командной строки и обеспечивает следующие режимы работы:
+//
+//	-host      — сетевой адрес для привязки (по умолчанию 0.0.0.0)
+//	-port      — порт HTTP-сервера (по умолчанию 8001)
+//	-addr      — адрес в одном аргументе (host:port или :port)
+//	-bg        — запуск в фоне (отделённый процесс, запись PID/логов)
+//	-stop      — остановка запущенного процесса по pid-файлу
+//	-logfile   — путь к файлу логов при -bg
+//	-pidfile   — путь к pid-файлу
+//
+// Поведение:
+//   - при запуске без -bg сервер стартует в текущем процессе;
+//   - при указании -bg создаётся дочерний процесс, stdout/stderr направляются в лог;
+//   - при -stop происходит завершение ранее запущенного процесса;
+//   - при получении SIGTERM или Ctrl+C выполняется корректное завершение.
 func Run(ctx context.Context, args []string) error {
 	cfg := DefaultServerConfig()
 
@@ -142,12 +164,19 @@ func Run(ctx context.Context, args []string) error {
 		return nil
 	}
 
+	dbCfg := postgresql.DefaultConfig()
+	db, err := postgresql.Init(ctx, dbCfg)
+	if err != nil {
+		return fmt.Errorf("init db: %w", err)
+	}
+	defer postgresql.Close()
+
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      api.NewRouter(),
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 20 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Handler:      api.NewRouter(db),
+		ReadTimeout:  cfg.ReadTimeout,
+		WriteTimeout: cfg.WriteTimeout,
+		IdleTimeout:  cfg.IdleTimeout,
 	}
 
 	errCh := make(chan error, 1)
@@ -175,6 +204,7 @@ func Run(ctx context.Context, args []string) error {
 	return srv.Shutdown(shCtx)
 }
 
+// applyPositional — парсит позиционный аргумент (host:port или :port) и обновляет конфиг.
 func applyPositional(cfg *Config, arg string) {
 	arg = strings.TrimSpace(arg)
 	if arg == "" {
@@ -194,6 +224,7 @@ func applyPositional(cfg *Config, arg string) {
 	}
 }
 
+// isJustPort — проверяет, является ли строка только номером порта без адреса.
 func isJustPort(s string) bool {
 	if strings.Contains(s, ":") {
 		return false
@@ -202,6 +233,7 @@ func isJustPort(s string) bool {
 	return err == nil
 }
 
+// splitAddr — разбивает строку адреса на host и port, с валидацией порта.
 func splitAddr(s string) (host, port string, err error) {
 	if strings.HasPrefix(s, ":") {
 		p := strings.TrimPrefix(s, ":")
@@ -225,6 +257,7 @@ func splitAddr(s string) (host, port string, err error) {
 	return h, p, nil
 }
 
+// normalizePort — проверяет корректность порта и возвращает нормализованное значение.
 func normalizePort(p string) (string, error) {
 	n, err := strconv.Atoi(strings.TrimSpace(p))
 	if err != nil || n < 1 || n > 65535 {
@@ -233,6 +266,7 @@ func normalizePort(p string) (string, error) {
 	return strconv.Itoa(n), nil
 }
 
+// finalizeHostPort — задаёт значения по умолчанию и валидирует host/port.
 func finalizeHostPort(host, port string) (string, string, error) {
 	if host == "" {
 		host = "0.0.0.0"
@@ -247,6 +281,8 @@ func finalizeHostPort(host, port string) (string, string, error) {
 	return host, np, nil
 }
 
+// relaunchInBackground — перезапускает текущий процесс в фоне,
+// перенаправляя stdout/stderr в файл и записывая PID в pidfile.
 func relaunchInBackground(logfile, pidfile string) error {
 	exe, err := os.Executable()
 	if err != nil {
@@ -278,7 +314,6 @@ func relaunchInBackground(logfile, pidfile string) error {
 			setBoolField(attr, "Setsid", true)
 		}
 	}
-	// если хоть что-то установили — присвоим
 	if anyFieldSet(attr) {
 		cmd.SysProcAttr = attr
 	}
@@ -298,6 +333,8 @@ func relaunchInBackground(logfile, pidfile string) error {
 	return nil
 }
 
+// setBoolField / setUintField / anyFieldSet — служебные функции
+// для установки полей структуры SysProcAttr через reflection.
 func setBoolField(attr *syscall.SysProcAttr, name string, val bool) bool {
 	v := reflect.ValueOf(attr).Elem()
 	f := v.FieldByName(name)
@@ -338,6 +375,7 @@ func anyFieldSet(attr *syscall.SysProcAttr) bool {
 	return false
 }
 
+// filterOutFlags — удаляет из списка аргументов указанные флаги и их значения.
 func filterOutFlags(args []string, names map[string]bool) []string {
 	var out []string
 	skipNext := false
@@ -363,6 +401,8 @@ func filterOutFlags(args []string, names map[string]bool) []string {
 	return out
 }
 
+// stopByPidfile — завершает процесс по pid-файлу с таймаутом ожидания.
+// Использует SIGTERM/SIGKILL на Unix и taskkill на Windows.
 func stopByPidfile(pidfile string, timeout time.Duration) error {
 	b, err := os.ReadFile(pidfile)
 	if err != nil {
@@ -415,6 +455,7 @@ func stopByPidfile(pidfile string, timeout time.Duration) error {
 	return nil
 }
 
+// processExists — проверяет, существует ли процесс с указанным PID.
 func processExists(pid int) bool {
 	if runtime.GOOS == "windows" {
 		_, err := os.FindProcess(pid)

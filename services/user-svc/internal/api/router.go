@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"net/http"
 	"time"
 
@@ -24,7 +25,7 @@ func LoginStub(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{"access_token":"stub-access","refresh_token":"stub-refresh"}`))
 }
 
-func NewRouter() http.Handler {
+func NewRouter(db *sql.DB) http.Handler {
 	r := router.New()
 
 	r.Use(
