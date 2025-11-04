@@ -36,7 +36,7 @@ func (r *Router) With(mw ...Middleware) *Router {
 
 func (r *Router) Group(prefix string) *Router {
 	p := &Router{
-		mux:         r.mux, // общий mux
+		mux:         r.mux,
 		base:        joinPaths(r.base, prefix),
 		middlewares: append([]Middleware{}, r.middlewares...), // наследуем стек
 		parent:      r,

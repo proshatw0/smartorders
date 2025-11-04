@@ -21,43 +21,6 @@ import (
 	"time"
 )
 
-// stringFlag — вспомогательный тип для флагов со строковым значением.
-type stringFlag struct {
-	set bool
-	val string
-}
-
-func (s *stringFlag) String() string       { return s.val }
-func (s *stringFlag) Set(v string) error   { s.val, s.set = v, true; return nil }
-func newStringFlag(def string) *stringFlag { return &stringFlag{val: def} }
-
-// boolFlag — вспомогательный тип для булевых флагов.
-
-type boolFlag struct {
-	set bool
-	val bool
-}
-
-func (b *boolFlag) String() string {
-	if b.val {
-		return "true"
-	}
-	return "false"
-}
-
-func (b *boolFlag) Set(v string) error {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "", "1", "t", "true", "yes", "y", "on":
-		b.val, b.set = true, true
-	case "0", "f", "false", "no", "n", "off":
-		b.val, b.set = false, true
-	default:
-		return fmt.Errorf("invalid boolean: %q", v)
-	}
-	return nil
-}
-func newBoolFlag(def bool) *boolFlag { return &boolFlag{val: def} }
-
 // Run — точка входа для запуска HTTP-сервера user-svc.
 //
 // Обрабатывает флаги командной строки и обеспечивает следующие режимы работы:
@@ -96,7 +59,28 @@ func Run(ctx context.Context, args []string) error {
 	fs.Var(logF, "logfile", "Log file path when -bg is set (default from config)")
 	fs.Var(pidF, "pidfile", "PID file path (default from config)")
 
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage of %s:\n", fs.Name())
+
+		fs.VisitAll(func(f *flag.Flag) {
+			name := fmt.Sprintf("  -%s", f.Name)
+			_, isBool := f.Value.(*boolFlag)
+			if !isBool {
+				name += " value"
+			}
+			line := fmt.Sprintf("%-20s %s", name, f.Usage)
+
+			if def := f.DefValue; def != "" && def != "false" {
+				line += fmt.Sprintf(" (default %v)", def)
+			}
+			fmt.Fprintln(os.Stderr, line)
+		})
+	}
+
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 
@@ -133,7 +117,7 @@ func Run(ctx context.Context, args []string) error {
 		cfg.PidFile = pidF.val
 	}
 
-	if stopF.set && stopF.val {
+	if stopF.val {
 		pidfile := strings.TrimSpace(cfg.PidFile)
 		if pidfile == "" {
 			return fmt.Errorf("pidfile is empty (check config or pass -pidfile)")
@@ -147,7 +131,7 @@ func Run(ctx context.Context, args []string) error {
 	}
 	addr := net.JoinHostPort(host, port)
 
-	if bgF.set && bgF.val {
+	if bgF.val {
 		logfile := strings.TrimSpace(cfg.LogFile)
 		if logfile == "" {
 			return fmt.Errorf("logfile is empty (check config or pass -logfile)")
@@ -203,6 +187,51 @@ func Run(ctx context.Context, args []string) error {
 	defer cancel()
 	return srv.Shutdown(shCtx)
 }
+
+// stringFlag — вспомогательный тип для флагов со строковым значением.
+type stringFlag struct {
+	set bool
+	val string
+}
+
+func (s *stringFlag) String() string       { return s.val }
+func (s *stringFlag) Set(v string) error   { s.val, s.set = v, true; return nil }
+func newStringFlag(def string) *stringFlag { return &stringFlag{val: def} }
+
+// boolFlag — вспомогательный тип для булевых флагов.
+type boolFlag struct {
+	set bool
+	val bool
+}
+
+func (b *boolFlag) String() string {
+	if b.val {
+		return "true"
+	}
+	return "false"
+}
+
+func (b *boolFlag) Set(v string) error {
+	v = strings.TrimSpace(strings.ToLower(v))
+	if v == "" {
+		b.val, b.set = true, true
+		return nil
+	}
+
+	switch v {
+	case "1", "t", "true", "yes", "y", "on":
+		b.val, b.set = true, true
+	case "0", "f", "false", "no", "n", "off":
+		b.val, b.set = false, true
+	default:
+		return fmt.Errorf("invalid boolean: %q", v)
+	}
+	return nil
+}
+
+func (b *boolFlag) IsBoolFlag() bool { return true }
+
+func newBoolFlag(def bool) *boolFlag { return &boolFlag{val: def} }
 
 // applyPositional — парсит позиционный аргумент (host:port или :port) и обновляет конфиг.
 func applyPositional(cfg *Config, arg string) {
@@ -272,7 +301,7 @@ func finalizeHostPort(host, port string) (string, string, error) {
 		host = "0.0.0.0"
 	}
 	if port == "" {
-		port = "8001"
+		port = "8080"
 	}
 	np, err := normalizePort(port)
 	if err != nil {

@@ -9,7 +9,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /user-svc ./cmd/user-s
 FROM gcr.io/distroless/static:nonroot
 USER nonroot:nonroot
 COPY --from=build /user-svc /user-svc
-COPY --from=build /src/migrations /migrations
+COPY --from=build /src/db/migrations /migrations
 ENV USER_SVC_MIGRATIONS_DIR=/migrations
-EXPOSE 8001
 ENTRYPOINT ["/user-svc"]

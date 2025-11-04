@@ -50,8 +50,14 @@ func DefaultConfig() Config {
 	}
 }
 
-// LoadFromEnv подставляет USER и PASSWORD из окружения.
+// LoadFromEnv подставляет данные из окружения.
 func (c *Config) LoadFromEnv() {
+	if v := os.Getenv("USER_SVC_DB_HOST"); v != "" {
+		c.Host = v
+	}
+	if v := os.Getenv("USER_SVC_DB_PORT"); v != "" {
+		c.Port = v
+	}
 	if v := os.Getenv("USER_SVC_DB_USER"); v != "" {
 		c.User = v
 	}

@@ -1,6 +1,9 @@
 package app
 
-import "time"
+import (
+	"os"
+	"time"
+)
 
 // Config — единый набор параметров запуска HTTP-сервера.
 type Config struct {
@@ -17,9 +20,13 @@ type Config struct {
 
 // DefaultServerConfig возвращает дефолтные параметры конфигурации.
 func DefaultServerConfig() Config {
+	port := os.Getenv("USER_SVC_PORT")
+	if port == "" {
+		port = "8080"
+	}
 	return Config{
 		Host:         "0.0.0.0",
-		Port:         "8001",
+		Port:         port,
 		LogFile:      "./user-svc.log",
 		PidFile:      "./user-svc.pid",
 		ReadTimeout:  10 * time.Second,
