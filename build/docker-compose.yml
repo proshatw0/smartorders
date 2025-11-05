@@ -1,7 +1,7 @@
+name: tepelss
 services:
   user-db:
     image: postgres:16
-    container_name: user-svc-db
     restart: unless-stopped
     env_file: .env
     environment:
@@ -10,8 +10,23 @@ services:
       POSTGRES_DB: ${USER_SVC_DB_NAME}
       USER_SVC_DB_USER: ${USER_SVC_DB_USER}
       USER_SVC_DB_PASSWORD: ${USER_SVC_DB_PASSWORD}
+    command:
+      - "postgres"
+      - "-c"
+      - "log_connections=on"
+      - "-c"
+      - "log_disconnections=on"
+      - "-c"
+      - "log_min_duration_statement=500"
+      - "-c"
+      - "log_min_messages=log"
+      - "-c"
+      - "log_line_prefix=%m pid=%p user=%u db=%d app=%a client=%h lvl=%l "
     ports:
       - "5432:5432"
+    labels:
+      com.example.service: user-db
+      com.example.env: "${ENV_NAME:-dev}"
     volumes:
       - ./infra/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
       - user-db_data:/var/lib/postgresql/data
@@ -29,6 +44,25 @@ services:
     ports:
       - "${USER_SVC_PORT}:${USER_SVC_PORT}"
     restart: unless-stopped
+    labels:
+      com.example.service: user-svc
+      com.example.env: "${ENV_NAME:-dev}"
+
+  user-promtail:
+    image: grafana/promtail:2.9.6
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yml -config.expand-env=true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
+      - promtail-positions:/var/lib/promtail
+    environment:
+      LOKI_URL: ${LOKI_URL:-http://host.docker.internal:3100/loki/api/v1/push}
+      ENV_NAME: ${ENV_NAME:-dev}
+    labels:
+      com.example.service: user-promtail
+      com.example.env: "${ENV_NAME:-dev}"
 
 volumes:
   user-db_data:
+  promtail-positions:
